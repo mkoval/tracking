@@ -3,9 +3,15 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
-static double const HOUGH_RHO    = 1;
-static double const HOUGH_THETA  = CV_PI / 180;
-static int    const HOUGH_THRESH = 10;
+struct Target {
+    std::vector<cv::Point> polygon_inner;
+    std::vector<cv::Point> polygon_outer;
+    cv::Mat mask;
+    double score;
+    bool dominant;
+};
+
+static double const THRESHOLD = 100;
 
 int main(int argc, char *argv[])
 {
@@ -45,6 +51,9 @@ int main(int argc, char *argv[])
     }
 
     // Ignore the inner-most polygons and those without four vertices.
+    std::vector<Target> targets;
+    std::vector<double> scores;
+
     for (size_t i = 0; i < polygons.size(); i++) {
         std::vector<cv::Point> outer = polygons[i];
         if (outer.size() != 4) continue;
@@ -62,28 +71,61 @@ int main(int argc, char *argv[])
             cv::fillConvexPoly(mask_outer, &outer[0], outer.size(), 255);
             cv::Mat mask = mask_outer - mask_inner;
 
-// DEBUG
-            cv::Mat render;
-            color.copyTo(render);
-            render.setTo(cv::Scalar(0, 0, 255), mask);
+            // Compute the average brightness in the masked region.
+            // TODO: Add a parallel line constraint.
+            // TODO: Replace this with histogram matching to improve accuracy.
+            cv::Scalar mean = cv::mean(color, mask);
 
-            cv::imshow("mask", render);
-            while (cv::waitKey() != ' ');
-
-
-#if 0
-            std::vector<std::vector<cv::Point> > contour_render(2);
-            contour_render[0] = inner;
-            contour_render[1] = outer;
-
-            cv::drawContours(render, contour_render, 0, cv::Scalar(0, 0, 255)); 
-            cv::drawContours(render, contour_render, 1, cv::Scalar(0, 255, 0)); 
-
-            cv::imshow("contour pair", render);
-            while (cv::waitKey() != ' ');
-#endif
-// DEBUG
+            Target target;
+            target.polygon_inner = inner;
+            target.polygon_outer = outer;
+            target.mask = mask;
+            target.score = cv::norm(mean);
+            target.dominant = true;
+            targets.push_back(target);
         }
     }
+
+    // Check which targets intersect.
+    // TODO: Make this more efficient by using a disjoint-sets data structure.
+    std::vector<bool> dominant_flags(targets.size(), true);
+
+    for (size_t i = 0; i < targets.size(); i++) {
+        Target &ti = targets[i];
+
+        for (size_t j = i + 1; j < targets.size(); j++) {
+            Target &tj = targets[j];
+
+            double max_overlap;
+            cv::Mat overlap = cv::min(ti.mask, tj.mask);
+            cv::minMaxLoc(overlap, NULL, &max_overlap);
+
+            if (max_overlap) {
+                if (ti.score > tj.score) {
+                    tj.dominant = false;
+                } else {
+                    ti.dominant = false;
+                }
+                std::cout << "overlap(" << i << ", " << j << ")" << std::endl;
+            }
+        }
+    }
+
+    // Filter out non-dominant targets.
+    std::vector<Target> dominant_targets;
+
+    for (size_t i = 0; i < targets.size(); i++) {
+        if (targets[i].dominant) {
+            dominant_targets.push_back(targets[i]);
+        }
+    }
+
+    // Overlay the targets.
+    for (size_t i = 0; i < dominant_targets.size(); i++) {
+        color.setTo(cv::Scalar(0, 255, 0), dominant_targets[i].mask);
+    }
+
+    cv::imshow("targets", color);
+    while (cv::waitKey() != ' ');
     return 0;
 }
