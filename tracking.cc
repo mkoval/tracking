@@ -12,6 +12,7 @@ struct Target {
 };
 
 static double const THRESHOLD = 100;
+static double const THRESHOLD_AREA = 500.0;
 
 int main(int argc, char *argv[])
 {
@@ -39,7 +40,7 @@ int main(int argc, char *argv[])
     std::vector<cv::Vec4i> hierarchy;
     cv::findContours(edges, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE);
 
-    std::vector<std::vector<cv::Point> > polygons(contours.size());
+    std::vector<std::vector<cv::Point> > polygons;
 
     for (size_t i = 0; i < contours.size(); i++) {
         std::vector<cv::Point> contour = contours[i];
@@ -47,7 +48,7 @@ int main(int argc, char *argv[])
 
         std::vector<cv::Point> polygon;
         cv::approxPolyDP(contours[i], polygon, length * 0.02, true);
-        polygons[i] = polygon;
+        polygons.push_back(polygon);
     }
 
     // Ignore the inner-most polygons and those without four vertices.
@@ -60,7 +61,6 @@ int main(int argc, char *argv[])
 
         // Search for first inner polygon with four corners.
         for (int j = hierarchy[i][2]; j > 0; j = hierarchy[j][1]) {
-            std::cout << "outer = " << i << ", inner = " << j << std::endl;
             std::vector<cv::Point> inner = polygons[j];
             if (inner.size() != 4) continue;
 
@@ -106,7 +106,6 @@ int main(int argc, char *argv[])
                 } else {
                     ti.dominant = false;
                 }
-                std::cout << "overlap(" << i << ", " << j << ")" << std::endl;
             }
         }
     }
@@ -122,10 +121,18 @@ int main(int argc, char *argv[])
 
     // Overlay the targets.
     for (size_t i = 0; i < dominant_targets.size(); i++) {
-        color.setTo(cv::Scalar(0, 255, 0), dominant_targets[i].mask);
-    }
+        cv::Mat render;
+        color.copyTo(render);
+        render.setTo(cv::Scalar(0, 255, 0), dominant_targets[i].mask);
 
-    cv::imshow("targets", color);
-    while (cv::waitKey() != ' ');
+        double inner_area = cv::contourArea(dominant_targets[i].polygon_inner, false);
+        double outer_area = cv::contourArea(dominant_targets[i].polygon_outer, false);
+        double area = outer_area - inner_area;
+
+        if (area >= THRESHOLD_AREA) {
+            cv::imshow("targets", render);
+            while (cv::waitKey() != ' ');
+        }
+    }
     return 0;
 }
